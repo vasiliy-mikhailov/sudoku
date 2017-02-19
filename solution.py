@@ -14,7 +14,8 @@ column_units = [cross(rows, c) for c in cols]
 square_units = [cross(rs, cs) for rs in ('ABC','DEF','GHI') for cs in ('123','456','789')]
 
 # vmihaylov: creating diagonal constraints for diagonal Sudoku
-diagonal_units = [['A1', 'B2', 'C3', 'D4', 'E5', 'F6', 'G7', 'H8', 'I9'], ['A9', 'B8', 'C7', 'D6', 'E5', 'F4', 'G3', 'H2', 'I1']]
+# vmihaylov (code-review fix): changed direct enumeration of boxes to more flexible - loops over rows and columns
+diagonal_units = [[r + c for r, c in zip(rows, cols)], [r + c for r, c in zip(rows, cols[::-1])]]
 
 # vmihaylov: adding diagonal constraints to constraint list
 unitlist = row_units + column_units + square_units + diagonal_units
@@ -26,6 +27,8 @@ def assign_value(values, box, value):
     Please use this function to update your values dictionary!
     Assigns a value to a given box. If it updates the board record it.
     """
+    
+    # vmihaylov (code-review fix): replace value of box with new one and save a copy of values into history for further visualization
     values[box] = value
     if len(value) == 1:
         assignments.append(values.copy())
@@ -71,13 +74,20 @@ def grid_values(grid):
             Keys: The boxes, e.g., 'A1'
             Values: The value in each box, e.g., '8'. If the box has no value, then the value will be '123456789'.
     """
+    
     chars = []
     digits = '123456789'
+    
+    # vmihaylov (code-review fix): traversing grid and storing it digits in chars array, if found dot in chars (stands for empty, unsolved box), put there all possible options - i.e. 123456789
     for c in grid:
+        # vmihaylov: code was a bit inaccurate since allowed to input unexpected chars like 'a', '_' etc in grid - now it throws exception if something except 1..9, '.' found.
+        assert(c in digits + '.')
         if c in digits:
             chars.append(c)
         if c == '.':
             chars.append(digits)
+            
+    # vmihaylov (code-review fix): check if grid has proper (9 x 9) size 
     assert len(chars) == 81
     return dict(zip(boxes, chars))
 
@@ -88,8 +98,13 @@ def display(values):
         values(dict): The sudoku in dictionary form
     """
 
+    # vmihaylov (code-review fix): determining size of biggest cell to have enough space to fit all box possibilities 
     width = 1+max(len(values[s]) for s in boxes)
+    
+    # vmihaylov (code-review fix): calculating horizontal lines
     line = '+'.join(['-'*(width*3)]*3)
+    
+    # vmihaylov (code-review fix): drawing grid cell by cell with vertical separator every 3 cols and horizontal separator every 3 rows
     for r in rows:
         print(''.join(values[r+c].center(width)+('|' if c in '36' else '')
                       for c in cols))
@@ -97,30 +112,68 @@ def display(values):
     return
 
 def eliminate(values):
+    """
+    # vmihaylov (code-review fix)
+    Looks for boxes with single possible digit and remove this digit from all possibilities of peers (i.e. from same row, same column, same square and in case of diagonal sudoku if box is on main diagonal - from diagonal(s) respectively 
+    Args: 
+        values(dict): The sudoku in dictionary form
+    """
+    
+    # vmihaylov (code-review fix): looking for boxes with single possibility inside
     solved_values = [box for box in values.keys() if len(values[box]) == 1]
+    
+    # vmihaylov (code-review fix): traversing all boxes with single possibility inside
     for box in solved_values:
+        # vmihaylov (code-review fix): determining digit inside box
         digit = values[box]
+        
+        # vmihaylov (code-review fix): looking for peers of box and removing particular value from list of peer's possibilities
         for peer in peers[box]:
             assign_value(values, peer, values[peer].replace(digit,''))
     return values
 
 def only_choice(values):
+    """
+    # vmihaylov (code-review fix)
+    Looks for digit that appears only once in possibility list of all boxes inside unit and places this digit instead of list of possible values 
+    Args: 
+        values(dict): The sudoku in dictionary form
+    """
+    
+    # vmihaylov (code-review fix): traversing all units and for every digit counting number of occurences of this digit inside of possibility list of every box
     for unit in unitlist:
         for digit in '123456789':
             dplaces = [box for box in unit if digit in values[box]]
-            if len(dplaces) == 1:
+            # vmihaylov (code-review fix): if digit appears only once in possibility list of all boxes inside unit, then replace possibility list of this box with digit. Original algorytm could replace digit with same digit, so it could eat more memory since assign_values stores whole copy of values for each assignment in history - small fix "values[dplaces[0]] != digit" reduces memory usage
+            if len(dplaces) == 1 and values[dplaces[0]] != digit:
                 assign_value(values, dplaces[0], digit)
     return values
 
 def reduce_puzzle(values):
-    solved_values = [box for box in values.keys() if len(values[box]) == 1]
+    """
+    # vmihaylov (code-review fix)
+    Tries eliminate, only_choice and naked_twins strategy with sudoku in dictionary form as long as list of possibilities reduces 
+    Args: 
+        values(dict): The sudoku in dictionary form
+    """
+ 
     stalled = False
     while not stalled:
-        solved_values_before = len([box for box in values.keys() if len(values[box]) == 1])
+        # vmihaylov (code-review fix): storing copy of values to compare after eliminate/only_choice/naked_twins
+        solved_values_before = values.copy() 
+        
+        # vmihaylov (code-review fix): apply eliminate/only_choice/naked_twins strategy
         values = eliminate(values)
         values = only_choice(values)
-        solved_values_after = len([box for box in values.keys() if len(values[box]) == 1])
+        values = naked_twins(values)
+        
+        # vmihaylov (code-review fix): just new reference to values to make explicit what is "Stalled" means
+        solved_values_after = values 
+        
+        # vmihaylov (code-review fix): stalled means we did not make any progress with our strategies last time we applied them, so second attempt will not make any progress and we shoud break cycle and return current sudoku with progress we have now
         stalled = solved_values_before == solved_values_after
+        
+        # vmihaylov (code-review fix): for case of incorrect sudoku - if we have some box with zero possibilities, break cycle and return false instead of sudoku grid
         if len([box for box in values.keys() if len(values[box]) == 0]):
             return False
     return values
